@@ -13,8 +13,13 @@
 #define MEM_BASE 0x80000000
 
 // 可以在这里或 Makefile 中定义 Trace 开关
+//开启指令追踪
 #define CONFIG_ITRACE
-#define CONFIG_DIFFTEST
+// 开启实时显示指令
+// #define CONFIG_ITRACE_REALTIME
+//开启差分测试
+ #define CONFIG_DIFFTEST
+//开启内存追踪
 // #define CONFIG_MTRACE
 // #define CONFIG_FTRACE
 // #define CONFIG_DTRACE
