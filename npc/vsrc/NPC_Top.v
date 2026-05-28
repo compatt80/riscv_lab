@@ -5,18 +5,22 @@ module NPC_Top (
     output              io_is_mmio      // 当前是否正在访问 MMIO 设备
 );
 
+// ------- 取指阶段 ---------
 reg  [31:0] pc;
 wire [31:0] inst;
+wire [31:0] next_pc;
 
 assign io_pc = pc;
 assign io_is_mmio = 1'b0;
+assign next_pc = pc + 32'd4;
 
+// pc 寄存器
 always @(posedge clock) begin
     if(reset) begin
         pc <= 32'h80000000;
     end
     else begin
-        pc <= pc + 4;
+        pc <= next_pc;
     end
 end
 
@@ -24,28 +28,155 @@ MemDPIC imem(
     .clk(clock),
     .en(1'b1),
     .addr(pc),
-    .wmask(8'b0),
+    .wmask(8'b0), // 不写内存
     .wdata(32'b0),
     .rdata(inst)
 );
+ITraceDPIC dpic_itrace(
+    .clk(clock),
+    .pc(pc),
+    .inst(inst),
+    .next_pc(next_pc)
+);
+
+
+// ------- 译码阶段 ---------
+wire [31:0] rs1_val;
+wire [31:0] rs2_val;
+wire reg_wen; // 寄存器写使能
+wire [31:0] wb_data;
+wire [31:0] a0_val;
+reg [31:0] src1; // 操作数1
+reg [31:0] src2;// 操作数2
+// 分段
 wire [6:0]  opcode = inst[6:0];
 wire [4:0]  rd     = inst[11:7];
 wire [2:0]  funct3 = inst[14:12];
 wire [4:0]  rs1    = inst[19:15];
-wire [11:0] imm12  = inst[31:20];
+wire [4:0]  rs2    = inst[24:20];
+wire [6:0] funct7  = inst[31:25];
+wire [11:0] funct12 = inst[31:20];
+// 立即数扩展
+wire [31:0] imm_i = {{20{inst[31]}}, inst[31:20]}; // 符号扩展
+wire [31:0] imm_s = {{20{inst[31]}}, inst[31:25], inst[11:7]}; // 符号扩展
+wire [31:0] imm_b = {{19{inst[31]}}, inst[31],inst[7],inst[30:25], inst[11:8], 1'b0}; // 符号扩展 末尾+0
+wire [31:0] imm_u = {inst[31:12], 12'b0};
+wire [31:0] imm_j = {{11{inst[31]}}, inst[31], inst[19:12], inst[20], inst[30:21], 1'b0}; // 符号扩展 末尾+0
+// 实例化寄存器堆
+RegFile u_regfile (
+    .clk(clock),
+    .wen(reg_wen),
+    .raddr1(rs1),
+    .raddr2(rs2),
+    .waddr(rd),
+    .wdata(wb_data),
+    .rdata1(rs1_val),
+    .rdata2(rs2_val),
+    .a0(a0_val)
+);
+// 生成控制信号
+// U-type
+wire is_lui   = (opcode == 7'b0110111);
+wire is_auipc = (opcode == 7'b0010111);
+// J-type
+wire is_jal   = (opcode == 7'b1101111);
+// I-type 
+wire is_jalr  = ((opcode == 7'b1100111) && (funct3 == 3'b000));
+wire is_lw    = ((opcode == 7'b0000011) && (funct3 == 3'b010));
+wire is_lbu   = ((opcode == 7'b0000011) && (funct3 == 3'b100));
+wire is_addi  = ((opcode == 7'b0010011) && (funct3 == 3'b000));
+wire is_ori   = ((opcode == 7'b0010011) && (funct3 == 3'b110));
+wire is_sltiu = ((opcode == 7'b0010011) && (funct3 == 3'b011));
+// S-type
+wire is_sw    = ((opcode == 7'b0100011) && (funct3 == 3'b010));
+wire is_sb    = ((opcode == 7'b0100011) && (funct3 == 3'b000));
+// B-type
+wire is_beq   = (opcode == 7'b1100011) && (funct3 == 3'b000);
+wire is_bne   = (opcode == 7'b1100011) && (funct3 == 3'b001);
+// R-type
+wire is_add   = ((opcode == 7'b0110011) && (funct3 == 3'b000) && (funct7 == 7'b0000000));
+wire is_sub   = ((opcode == 7'b0110011) && (funct3 == 3'b000) && (funct7 == 7'b0100000));
+// system
+wire is_ebreak = ((opcode == 7'b1110011)&& (rd == 5'b00000) && (funct3 == 3'b000)&& (rs1 == 5'b00000)&& (funct12 == 12'b000000000001));
 
-wire ebreak_en = (opcode == 7'b1110011)
-               && (rd     == 5'b00000)
-               && (funct3 == 3'b000)
-               && (rs1    == 5'b00000)
-               && (imm12  == 12'b000000000001);
+wire is_load  = is_lw || is_lbu;
+wire is_store = is_sw || is_sb;
+wire is_branch = is_beq || is_bne;
+wire is_op_imm = is_addi || is_ori || is_sltiu;
+wire is_op = is_add || is_sub;
 
-wire [31:0] a0_val = 32'b0;
+wire need_rs1 = is_jalr || is_load || is_store || is_branch || is_op_imm || is_op;
+wire need_rs2 = is_store || is_branch || is_op;
+wire need_rd  = is_lui || is_auipc || is_jal || is_jalr || is_load || is_op_imm || is_op;
+
+wire rd_wen = is_lui || is_auipc || is_jal || is_jalr || is_load || is_op_imm || is_op;
+assign reg_wen = 1'b0;
+
+// 操作数来源
+always @(*) begin
+    case (1'b1)
+        is_auipc, is_jal: begin
+            src1 = pc;
+        end
+        default: begin
+            src1 = rs1_val;
+        end
+    endcase
+end
+
+always @(*) begin
+    case (1'b1)
+        is_lui, is_auipc: begin
+            src2 = imm_u;
+        end
+        is_jal: begin
+            src2 = imm_j;
+        end
+        is_jalr, is_load, is_op_imm: begin
+            src2 = imm_i;
+        end
+        is_store: begin
+            src2 = imm_s;
+        end
+        is_branch: begin
+            src2 = imm_b;
+        end
+        default: begin
+            src2 = rs2_val;
+        end
+    endcase
+end
 
 EbreakDPIC dpic_ebreak (
     .clk       (clock),
-    .ebreak_en (ebreak_en),
+    .ebreak_en (is_ebreak),
     .a0_val    (a0_val)
 );
 
+endmodule
+
+// 寄存器堆模块
+module RegFile (
+    input clk,
+    input wen, // 写使能
+    input wire [4:0] raddr1, // rs1地址
+    input wire [4:0] raddr2,// rs2地址
+    input wire [4:0]  waddr, // 写地址
+    input wire [31:0] wdata, // 写数据
+    output wire [31:0] rdata1,// rs1数据
+    output wire [31:0] rdata2,// rs2数据
+    output wire [31:0] a0 // a0寄存器 
+);
+
+    reg [31:0] regs[31:0]; // 定义32个寄存器 每个寄存器数据位 32位
+    assign rdata1 = (raddr1 == 5'd0) ? 32'b0 : regs[raddr1]; // x0寄存器数值为0
+    assign rdata2 = (raddr2 == 5'd0) ? 32'b0 : regs[raddr2];
+    assign a0 = regs[10];
+
+    always @(posedge clk) begin
+        if(wen && (waddr != 5'b0)) begin
+            regs[waddr] <= wdata;
+        end
+    end
+    
 endmodule
