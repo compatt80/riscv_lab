@@ -19,7 +19,7 @@ always @(posedge clock) begin
     if(reset) begin
         pc <= 32'h80000000;
     end
-    else begin
+    else begin  
         pc <= next_pc;
     end
 end
@@ -82,34 +82,66 @@ RegfileDPIC dpic_regfile (
 );
 // 生成控制信号
 // U-type
-wire is_lui   = (opcode == 7'b0110111);
-wire is_auipc = (opcode == 7'b0010111);
+wire is_lui   = (opcode == 7'b0110111); // 把立即数放到高20位 低12位补 0
+wire is_auipc = (opcode == 7'b0010111); // auipc rd, imm20。rd = pc + (imm20 << 12)
+
 // J-type
-wire is_jal   = (opcode == 7'b1101111);
+wire is_jal   = (opcode == 7'b1101111); // jal rd, imm。rd = pc + 4 / pc = pc + imm
+
 // I-type 
-wire is_jalr  = ((opcode == 7'b1100111) && (funct3 == 3'b000));
+wire is_jalr  = ((opcode == 7'b1100111) && (funct3 == 3'b000)); // jalr rd, rs1, imm。rd = pc + 4 / pc = (rs1 + imm) & ~1
 wire is_lw    = ((opcode == 7'b0000011) && (funct3 == 3'b010));
 wire is_lbu   = ((opcode == 7'b0000011) && (funct3 == 3'b100));
 wire is_addi  = ((opcode == 7'b0010011) && (funct3 == 3'b000));
-wire is_ori   = ((opcode == 7'b0010011) && (funct3 == 3'b110));
-wire is_sltiu = ((opcode == 7'b0010011) && (funct3 == 3'b011));
+wire is_ori   = ((opcode == 7'b0010011) && (funct3 == 3'b110)); // ori rd, rs1, imm / rd = rs1 | imm
+wire is_sltiu = ((opcode == 7'b0010011) && (funct3 == 3'b011)); // 无符号小于立即数 sltiu rd, rs1, imm / rd = unsigned(rs1) < unsigned(imm) ? 1 : 0
+// 指令补充
+wire is_slti = ((opcode == 7'b0010011) && (funct3 == 3'b010)); // 有符号小于立即数 slti rd, rs1, imm / rd = signed(rs1) < signed(imm) ? 1 : 0
+wire is_xori = ((opcode == 7'b0010011) && (funct3 == 3'b100)); 
+wire is_andi = ((opcode == 7'b0010011) && (funct3 == 3'b111));
+wire is_slli = ((opcode == 7'b0010011) && (funct3 == 3'b001) && (funct7 == 7'b0000000)); // 逻辑左移立即数 slli rd, rs1, shamt / rd = rs1 << shamt
+wire is_srli = ((opcode == 7'b0010011) && (funct3 == 3'b101) && (funct7 == 7'b0000000)); // 逻辑右移立即数 srli rd, rs1, shamt / rd = rs1 >> shamt
+wire is_srai = ((opcode == 7'b0010011) && (funct3 == 3'b101) && (funct7 == 7'b0100000)); // 算术右移立即数 srai rd, rs1, shamt / rd = signed(rs1) >>> shamt
+wire is_lb = ((opcode == 7'b0000011) && (funct3 == 3'b000)); // 读 1 字节，按有符号数扩展
+wire is_lh = ((opcode == 7'b0000011) && (funct3 == 3'b001)); // 读 2 字节，按符号扩展
+wire is_lhu = ((opcode == 7'b0000011) && (funct3 == 3'b101)); // 读 2 字节，按无符号数零扩展
+
 // S-type
-wire is_sw    = ((opcode == 7'b0100011) && (funct3 == 3'b010));
-wire is_sb    = ((opcode == 7'b0100011) && (funct3 == 3'b000));
+wire is_sw = ((opcode == 7'b0100011) && (funct3 == 3'b010));
+wire is_sb = ((opcode == 7'b0100011) && (funct3 == 3'b000));
+// 指令补充
+wire is_sh = ((opcode == 7'b0100011) && (funct3 == 3'b001)); // 写 2 字节到内存
+
 // B-type
 wire is_beq   = (opcode == 7'b1100011) && (funct3 == 3'b000);
 wire is_bne   = (opcode == 7'b1100011) && (funct3 == 3'b001);
+// 指令补充
+wire is_blt  = ((opcode == 7'b1100011) && (funct3 == 3'b100)); // 有符号小于则跳转 blt rs1, rs2, imm / if (signed(rs1) < signed(rs2)) pc = pc + imm
+wire is_bge  = ((opcode == 7'b1100011) && (funct3 == 3'b101)); // 有符号大于等于则跳转 bge rs1, rs2, imm / if (signed(rs1) >= signed(rs2)) pc = pc + imm
+wire is_bltu = ((opcode == 7'b1100011) && (funct3 == 3'b110)); // 无符号
+wire is_bgeu = ((opcode == 7'b1100011) && (funct3 == 3'b111)); // 无符号
+
 // R-type
 wire is_add   = ((opcode == 7'b0110011) && (funct3 == 3'b000) && (funct7 == 7'b0000000));
 wire is_sub   = ((opcode == 7'b0110011) && (funct3 == 3'b000) && (funct7 == 7'b0100000));
+// 指令补充
+wire is_slt  = ((opcode == 7'b0110011) && (funct3 == 3'b010) && (funct7 == 7'b0000000)); // 有符号小于比较
+wire is_sltu = ((opcode == 7'b0110011) && (funct3 == 3'b011) && (funct7 == 7'b0000000)); // 无符号小于比较
+wire is_xor  = ((opcode == 7'b0110011) && (funct3 == 3'b100) && (funct7 == 7'b0000000)); // 
+wire is_or   = ((opcode == 7'b0110011) && (funct3 == 3'b110) && (funct7 == 7'b0000000));
+wire is_and  = ((opcode == 7'b0110011) && (funct3 == 3'b111) && (funct7 == 7'b0000000));
+wire is_sll  = ((opcode == 7'b0110011) && (funct3 == 3'b001) && (funct7 == 7'b0000000)); // 逻辑左移 sll rd, rs1, rs2 / rd = rs1 << rs2[4:0]
+wire is_srl  = ((opcode == 7'b0110011) && (funct3 == 3'b101) && (funct7 == 7'b0000000)); // 逻辑右移
+wire is_sra  = ((opcode == 7'b0110011) && (funct3 == 3'b101) && (funct7 == 7'b0100000)); // 算数右移
+
 // system
 wire is_ebreak = ((opcode == 7'b1110011)&& (rd == 5'b00000) && (funct3 == 3'b000)&& (rs1 == 5'b00000)&& (funct12 == 12'b000000000001));
 
-wire is_load  = is_lw || is_lbu;
-wire is_store = is_sw || is_sb;
-wire is_branch = is_beq || is_bne;
-wire is_op_imm = is_addi || is_ori || is_sltiu;
-wire is_op = is_add || is_sub;
+wire is_load  = is_lw || is_lbu || is_lb || is_lh || is_lhu;
+wire is_store = is_sw || is_sb || is_sh;
+wire is_branch = is_beq || is_bne || is_blt || is_bge || is_bltu || is_bgeu;
+wire is_op_imm = is_addi || is_ori || is_sltiu || is_xori || is_slti || is_andi || is_slli || is_srli || is_srai;
+wire is_op = is_add || is_sub|| is_slt || is_sltu || is_xor || is_or || is_and || is_sll || is_srl || is_sra;
 
 // wire need_rs1 = is_jalr || is_load || is_store || is_branch || is_op_imm || is_op;
 // wire need_rs2 = is_store || is_branch || is_op;
@@ -163,6 +195,12 @@ localparam ALU_SUB  = 4'd1;
 localparam ALU_OR   = 4'd2;
 localparam ALU_SLTU = 4'd3; // 无符号数比较 用于sltiu
 localparam ALU_COPY = 4'd4; // 用于 lui
+localparam ALU_SLT = 4'd5; // 有符号小于比较
+localparam ALU_XOR = 4'd6; // 按位异或
+localparam ALU_AND = 4'd7; // 按位与
+localparam ALU_SLL = 4'd8; // 逻辑左移
+localparam ALU_SRL = 4'd9; // 逻辑右移
+localparam ALU_SRA = 4'd10; // 算术右移
 reg [3:0] alu_op; // 操作类型
 reg [31:0] alu_result; // 计算结果
 
@@ -170,9 +208,15 @@ reg [31:0] alu_result; // 计算结果
 always @(*) begin
     case(1'b1)
         is_sub: alu_op = ALU_SUB;
-        is_ori: alu_op = ALU_OR;
-        is_sltiu: alu_op = ALU_SLTU;
+        is_or,is_ori: alu_op = ALU_OR;
+        is_sltiu, is_sltu: alu_op = ALU_SLTU;
         is_lui: alu_op = ALU_COPY;
+        is_slt, is_slti: alu_op = ALU_SLT;
+        is_xor, is_xori: alu_op = ALU_XOR;
+        is_and, is_andi: alu_op = ALU_AND;
+        is_sll, is_slli: alu_op = ALU_SLL;
+        is_srl, is_srli: alu_op = ALU_SRL;
+        is_sra, is_srai: alu_op = ALU_SRA;
         default: alu_op = ALU_ADD;
     endcase
 end
@@ -183,13 +227,21 @@ always @(*) begin
         ALU_SUB: alu_result = src1 - src2;
         ALU_OR: alu_result = src1 | src2;
         ALU_COPY: alu_result = src2;
-        ALU_SLTU: alu_result = ({1'b0, src1} < {1'b0, src2}) ? 32'd1 : 32'd0;
+        ALU_SLTU: alu_result = (src1 < src2) ? 32'd1 : 32'd0;
+        ALU_SLT: alu_result = ($signed(src1) < $signed(src2)) ? 32'd1 : 32'd0;
+        ALU_XOR: alu_result = src1 ^ src2;
+        ALU_AND: alu_result = src1 & src2;
+        ALU_SLL: alu_result = src1 << src2[4:0];
+        ALU_SRL: alu_result = src1 >> src2[4:0];
+        ALU_SRA: alu_result = $signed(src1) >>> src2[4:0];
         default: alu_result = 32'b0;
     endcase
 end
 
-// 跳转类指令 修改PC
-wire branch_yes =  (is_beq && (rs1_val == rs2_val)) || (is_bne && (rs1_val != rs2_val));
+// 跳转类指令 修改PC 对应上方的next_pc
+wire branch_yes =  (is_beq && (rs1_val == rs2_val)) || (is_bne && (rs1_val != rs2_val)) 
+                    || (is_blt  && ($signed(rs1_val) <  $signed(rs2_val))) ||  (is_bge  && ($signed(rs1_val) >= $signed(rs2_val))) 
+                    ||  (is_bltu && (rs1_val <  rs2_val)) || (is_bgeu && (rs1_val >= rs2_val));
 wire [31:0] branch_target = pc + imm_b;
 
 wire [31:0] jal_target = pc + imm_j;
@@ -203,7 +255,6 @@ reg [31:0] dmem_wdata; // 写数据
 wire [31:0] dmem_rdata; // 读数据
 reg [31:0] mem_result; // 根据lw lbu来决定最终的读数据结果
 
-
 // sw sb写哪个字节
 always @(*) begin
     case(1'b1)
@@ -212,6 +263,9 @@ always @(*) begin
         end
         is_sb:begin
             dmem_wmask = 8'b00000001 << dmem_addr[1:0];
+        end
+        is_sh:begin
+            dmem_wmask = dmem_addr[1] ? 8'b00001100 : 8'b00000011;
         end
         default: dmem_wmask = 8'b00000000;
     endcase
@@ -227,6 +281,10 @@ always @(*) begin
             else if(dmem_addr[1:0] == 2'd1) dmem_wdata = {16'b0, rs2_val[7:0], 8'b0};
             else if(dmem_addr[1:0] == 2'd2) dmem_wdata = {8'b0, rs2_val[7:0], 16'b0};
             else dmem_wdata = {rs2_val[7:0], 24'b0};
+        end
+        is_sh:begin // 只有写低半字、高半字的情况
+            if(dmem_addr[1] == 1'd0) dmem_wdata = {16'b0, rs2_val[15:0]};
+            else dmem_wdata = {rs2_val[15:0], 16'b0};
         end 
         default: dmem_wdata = 32'b0;
     endcase
@@ -242,6 +300,20 @@ always @(*) begin
             else if(dmem_addr[1:0] == 2'd1) mem_result = {24'b0,dmem_rdata[15:8]};
             else if(dmem_addr[1:0] == 2'd2) mem_result = {24'b0,dmem_rdata[23:16]};
             else mem_result = {24'b0,dmem_rdata[31:24]};
+        end
+        is_lhu:begin
+            if(dmem_addr[1:0] == 2'd0) mem_result = {16'b0,dmem_rdata[15:0]};
+            else mem_result = {16'b0,dmem_rdata[31:16]};
+        end
+        is_lh:begin
+            if(dmem_addr[1] == 1'd0) mem_result = {{16{dmem_rdata[15]}},dmem_rdata[15:0]};
+            else mem_result = {{16{dmem_rdata[31]}},dmem_rdata[31:16]};
+        end
+        is_lb:begin
+            if(dmem_addr[1:0] == 2'd0) mem_result = {{24{dmem_rdata[7]}},dmem_rdata[7:0]};
+            else if(dmem_addr[1:0] == 2'd1) mem_result = {{24{dmem_rdata[15]}},dmem_rdata[15:8]};
+            else if(dmem_addr[1:0] == 2'd2) mem_result = {{24{dmem_rdata[23]}},dmem_rdata[23:16]};
+            else mem_result = {{24{dmem_rdata[31]}},dmem_rdata[31:24]};
         end
         default:mem_result = 32'b0;
     endcase
@@ -261,7 +333,6 @@ MemDPIC dmem(
 // ------- 写回阶段 ---------
 assign reg_wen = is_lui || is_auipc || is_jal || is_jalr || is_load || is_op_imm || is_op; // 写回请求
 assign wb_data = is_load ? mem_result : (is_jal || is_jalr) ? pc + 32'd4 : alu_result;
-
 
 
 endmodule

@@ -24,6 +24,9 @@
 // #define CONFIG_FTRACE
 // #define CONFIG_DTRACE
 
+// 实现批处理
+#define CONFIG_BATCH_MODE
+
 void init_difftest(const char *ref_so_file, long img_size, int port);
 void difftest_step(uint32_t pc, uint32_t npc);
 void difftest_skip_ref();
