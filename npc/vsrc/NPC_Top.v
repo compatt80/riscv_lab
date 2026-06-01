@@ -19,7 +19,7 @@ always @(posedge clock) begin
     if(reset) begin
         pc <= 32'h80000000;
     end
-    else begin  
+    else begin
         pc <= next_pc;
     end
 end
@@ -319,7 +319,7 @@ always @(*) begin
     endcase
 end
 // io_is_mmio判断
-assign io_is_mmio = is_store && ((dmem_addr < 32'h80000000) || (dmem_addr >= 32'h88000000));
+assign io_is_mmio = (is_store || is_load) && ((dmem_addr < 32'h80000000) || (dmem_addr >= 32'h88000000));
 // 实例化dmem
 MemDPIC dmem(
     .clk(clock),
